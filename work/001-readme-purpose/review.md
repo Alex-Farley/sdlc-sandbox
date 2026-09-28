@@ -1,8 +1,12 @@
 ---
 id: "001"
 stage: review
-status: draft          # draft | approved (human only)
+status: approved
 pr: ""
+approved_by: "alex farley <37551336+Alex-Farley@users.noreply.github.com>"
+approved_on: "2026-09-28T18:04:29Z"
+upstream_sha256: 15ca3d8c0b788745cd71fc84d920754a40a369814b3197230ae3e32c642b850b
+approved_sha256: a20421c4db141e71870c7d0a5c1047cdd366c3508dead673e9d66108426de1c9
 ---
 
 # Review: readme-purpose
