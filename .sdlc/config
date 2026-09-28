@@ -1,0 +1,32 @@
+# .sdlc/config - read as DATA by scripts/sdlc and the git hooks (never executed as a script).
+# Format: KEY="value", one per line; comments after a value are fine. Unknown keys are ignored.
+# Changes only take effect once committed, and CI uses the copy on your main branch, so a PR
+# cannot loosen its own rules.
+
+# Command that proves work is correct. Chain build, test and lint with &&.
+VERIFY_CMD="test -f README.md && echo README present"   # placeholder until the sandbox has real tests
+
+# EXTRA protected path prefixes (committing changes needs SDLC_ALLOW_PROTECTED=1).
+# Always protected anyway: .sdlc/ .claude/ .codex/ .gemini/ .agents/ .github/ scripts/sdlc
+# scripts/github-protect.sh CLAUDE.md REVIEW.md maintain/runbooks/ and any .gitattributes.
+# Add generated or vendored code and migrations that have already run, e.g. "vendor/ db/migrate/"
+PROTECTED_PATHS=""
+
+# Run VERIFY_CMD on every commit? 1 = yes (safer, slower), 0 = no (pre-push and CI still run it).
+VERIFY_ON_COMMIT="0"
+
+DEFAULT_BRANCH="main"
+
+# Signed approvals: "1" makes 'sdlc approve' sign its commit (git commit -S) and CI reject approval
+# commits not signed by a key in .sdlc/allowed_signers. Use a key that needs your touch or
+# passphrase, so an agent cannot use it quietly. See the guide ("Signed approvals").
+REQUIRE_SIGNED_APPROVALS="0"
+
+# Paths the built-in secret patterns skip (e.g. test fixtures with fake keys). gitleaks is separate.
+SECRETS_IGNORE_PATHS=""
+
+# Client code gate (policy-ai-use). Set CLIENT_CODE="1" for client repos: 'sdlc new' then refuses
+# to start work until AI_USE_APPROVAL records who agreed AI tools can be used, and the reference.
+# e.g. AI_USE_APPROVAL="J Smith (DfE SRO) 2026-10-01, contract schedule 4 v2, Claude via dxw Team plan"
+CLIENT_CODE="0"
+AI_USE_APPROVAL=""

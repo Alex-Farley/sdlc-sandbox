@@ -1,0 +1,25 @@
+# Project config for OpenAI Codex CLI (installed as .codex/config.toml).
+# Codex ignores this whole folder until you trust the project: in ~/.codex/config.toml add
+#   [projects."/absolute/path/to/repo"]
+#   trust_level = "trusted"
+# and approve the hook once in Codex with /hooks. Check these keys against the current Codex docs.
+
+# Edits inside the repo are allowed; anything else (network, writes outside the repo, and writes
+# to .git, which Codex keeps read-only) needs your approval. Expect Codex to ask before commits.
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+hooks = true
+
+# Same guard as Claude and Gemini: blocks approvals, protected files, hook bypasses, force pushes.
+[[hooks.PreToolUse]]
+matcher = "^(Bash|apply_patch)$"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'command -v python3 >/dev/null 2>&1 || { echo "sdlc guard needs python3 - blocking" >&2; exit 2; }; python3 "$(git rev-parse --show-toplevel)/.sdlc/hooks/agent-guard.py"'
+timeout = 30
+statusMessage = "sdlc guard"

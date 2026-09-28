@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run the verify command before anything leaves the machine. No AI.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT" || exit 1
+HOOKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$HOOKDIR/lib.sh"
+sdlc_load_config
+[ "${SDLC_SKIP_VERIFY:-0}" = "1" ] && { echo "pre-push: verify skipped (SDLC_SKIP_VERIFY=1)"; exit 0; }
+[ -n "$VERIFY_CMD" ] || { echo "pre-push: no VERIFY_CMD committed in .sdlc/config - skipping"; exit 0; }
+echo "pre-push: running VERIFY_CMD"
+bash -c "$VERIFY_CMD" || { echo "pre-push: BLOCKED - verify failed. Fix it, or push with SDLC_SKIP_VERIFY=1 and say why in the PR." >&2; exit 1; }

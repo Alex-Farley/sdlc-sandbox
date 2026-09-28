@@ -1,0 +1,13 @@
+# Every change to these paths needs review from the owner. Replace @Alex-Farley.
+# On a solo account this mostly documents intent; see docs for how review works when you're alone.
+/work/                @Alex-Farley
+/.sdlc/               @Alex-Farley
+/.claude/             @Alex-Farley
+/.agents/             @Alex-Farley
+/.github/             @Alex-Farley
+/scripts/             @Alex-Farley
+/evals/               @Alex-Farley
+/maintain/runbooks/   @Alex-Farley
+/AGENTS.md            @Alex-Farley
+/CLAUDE.md            @Alex-Farley
+/REVIEW.md            @Alex-Farley

@@ -1,0 +1,10 @@
+# Codex command rules (installed as .codex/rules/sdlc.rules). These match the START of a command
+# only, so the guard hook does the thorough checks; these are a quick first line.
+# Test with: codex execpolicy check --pretty --rules .codex/rules/sdlc.rules -- git push --force
+prefix_rule(pattern=["git", "push", ["--force", "-f", "--force-with-lease"]], decision="forbidden", justification="No force-push")
+prefix_rule(pattern=["git", "push"], decision="prompt", justification="Pushes need your approval")
+prefix_rule(pattern=["gh", "pr", ["merge", "review"]], decision="forbidden", justification="A person approves and merges PRs")
+prefix_rule(pattern=["git", "config"], decision="forbidden", justification="No git config changes")
+prefix_rule(pattern=["git", "commit", ["-n", "--no-verify"]], decision="forbidden", justification="Hooks must run")
+prefix_rule(pattern=["scripts/sdlc", ["approve", "unlock-test"]], decision="forbidden", justification="Approvals are for a person")
+prefix_rule(pattern=[["curl", "wget"]], decision="forbidden", justification="No ad-hoc downloads")

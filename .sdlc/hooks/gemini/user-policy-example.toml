@@ -1,0 +1,8 @@
+# OPTIONAL: Gemini CLI only enforces deny policies from your USER folder (project policies are
+# currently disabled). Copy to ~/.gemini/policies/sdlc.toml to add a second line of defence.
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = "(git\\s+push\\b.*(--force|\\s-f\\b))|(gh\\s+pr\\s+(merge|review))|(git\\s+config\\s)|(--no-verify)|(sdlc\\s+(approve|unlock-test))|(^|\\s)(curl|wget)\\b"
+decision = "deny"
+priority = 900
+denyMessage = "Blocked by the sdlc policy: ask a person to do this"

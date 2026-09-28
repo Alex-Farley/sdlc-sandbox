@@ -1,0 +1,27 @@
+# OPT-IN, COSTS TOKENS. Regression-tests the agent's instructions against real past tasks.
+# Runs weekly and on demand only (never on PRs, so a PR cannot inject eval cases that run with
+# your API key). Enable with repo variable EVALS_ENABLED=true and secret ANTHROPIC_API_KEY.
+# Optional repo variable AGENT_CMD to use another agent CLI.
+name: sdlc-evals
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evals:
+    if: vars.EVALS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: npm install -g @anthropic-ai/claude-code@2.1.283   # pinned; update deliberately
+      - run: evals/run.sh
+        env:
+          AGENT_CMD: ${{ vars.AGENT_CMD || 'claude -p --permission-mode acceptEdits --max-turns 25' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_MIN_PASS: "90"

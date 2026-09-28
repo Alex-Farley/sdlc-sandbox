@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# sdlc - small helper for the AI-native delivery loop. No AI inside. Needs bash 3.2+ and git 2.23+.
+#
+#   scripts/sdlc new <slug> [title] [--small|--spike] [--no-branch]
+#                    create work/NNN-slug/intent.md (change.md with --small, spike.md with --spike)
+#                    on branch sdlc/NNN-slug (spike/NNN-slug for spikes)
+#   scripts/sdlc status                          every work item and its current stage
+#   scripts/sdlc approve <work-dir> <artifact>   PERSON ONLY: approve intent|spec|plan|change|review
+#   scripts/sdlc check [--signed-since <ref>]    fail if approvals were changed, or (optionally) unsigned
+#   scripts/sdlc verify                          run VERIFY_CMD from .sdlc/config
+#   scripts/sdlc lock-test <path>                lock a committed test so the fix cannot change it
+#   scripts/sdlc unlock-test <path>              PERSON ONLY: unlock it
+#   scripts/sdlc red <work-dir> -- <test cmd>    TDD: run a new test, require it to FAIL, log the evidence
+#   scripts/sdlc green <work-dir> -- <test cmd>  TDD: run it again, require it to PASS, log the evidence
+#   scripts/sdlc adr <title>                     start an architecture decision record in docs/adr/
+#   scripts/sdlc report [days]                   delivery report: DORA measures, stage times, TDD evidence
+#
+set -euo pipefail
+
+START_DIR="$(pwd)"
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+LIB="${SDLC_LIB:-$ROOT/.sdlc/hooks/lib.sh}"
+[ -f "$LIB" ] || { echo "sdlc: $LIB missing - reinstall the pack" >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$LIB"
+sdlc_load_config
+LOCKED=".sdlc/locked-tests"
+TEMPLATES=".sdlc/templates"
+
+die() { echo "sdlc: $*" >&2; exit 1; }
+
+# A speed bump, NOT a security control: it stops an agent approving by accident, but anything that
+# can run commands can fake a terminal. For approvals that prove it was you, turn on
+# REQUIRE_SIGNED_APPROVALS with a signing key that needs your touch or passphrase (see the guide).
+require_person() {
+  if [ "${SDLC_ALLOW_NONINTERACTIVE:-0}" = "1" ]; then return 0; fi
+  [ -t 0 ] && [ -t 1 ] || die "'$1' is for a person at a terminal. Agents must not approve their own work."
+  printf 'You are "%s". Type "yes" to confirm you have read it and approve: ' "$(git config user.name || echo unknown)"
+  local answer; read -r answer
+  [ "$answer" = "yes" ] || die "not approved."
+}
+
+fm_set() {  # fm_set <file> <key> <value>  (value written verbatim)
+  local file="$1" tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/sdlc.XXXXXX")"
+  K="$2" V="$3" awk '
+    BEGIN{k=ENVIRON["K"]; v=ENVIRON["V"]}
+    { sub(/\r$/,"") }
+    NR==1&&/^---/{f=1;print;next}
+    f&&/^---/{ if(!done){print k": "v} f=0; print; next }
+    f&&index($0,k":")==1 { if(!done){print k": "v; done=1}; next }
+    {print}' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+next_id() {  # highest NNN across this checkout and every local and remote branch, plus one
+  local max=0 n ref
+  for n in $( { ls -1 work 2>/dev/null
+               for ref in $(git for-each-ref --format='%(refname)' refs/heads refs/remotes 2>/dev/null); do
+                 git ls-tree --name-only "$ref" work/ 2>/dev/null | sed 's#^work/##'
+               done; } | grep -Eo '^[0-9]+' | sort -n | tail -1 ); do max="$n"; done
+  printf '%03d' $(( 10#$max + 1 ))
+}
+
+cmd_new() {
+  local slug="" title="" branch=1 small=0 spike=0 a
+  for a in "$@"; do
+    case "$a" in
+      --no-branch) branch=0;;
+      --small) small=1;;
+      --spike) spike=1;;
+      *) if [ -z "$slug" ]; then slug="$a"; else title="${title:+$title }$a"; fi;;
+    esac
+  done
+  [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{0,50}$ ]] || die "slug must be lowercase letters, digits and hyphens (max 51), e.g. better-errors"
+  title="${title:-$slug}"
+  title="$(printf '%s' "$title" | tr -d '\r\n"' | cut -c1-120)"
+
+  if [ "${CLIENT_CODE:-0}" = "1" ] && [ -z "${AI_USE_APPROVAL:-}" ]; then
+    die "this repo is marked CLIENT_CODE=1 but AI_USE_APPROVAL is empty in .sdlc/config.
+  Record who agreed AI tools may be used on this client's code, and the contract/DPA reference,
+  before starting work. See the policy-ai-use skill."
+  fi
+
+  local id dir
+  id="$(next_id)"
+  dir="work/${id}-${slug}"
+  [ ! -e "$dir" ] || die "$dir already exists"
+
+  if [ "$branch" = 1 ] && git rev-parse --verify -q HEAD >/dev/null; then
+    local cur; cur="$(git rev-parse --abbrev-ref HEAD)"
+    [ "$cur" = "${DEFAULT_BRANCH:-main}" ] || die "you are on '$cur'. One work item per branch: switch to ${DEFAULT_BRANCH:-main} first (or use --no-branch to add it here on purpose)."
+    local prefix=sdlc; [ "$spike" = 1 ] && prefix=spike
+    git switch -q -c "${prefix}/${id}-${slug}" && echo "Switched to new branch ${prefix}/${id}-${slug}"
+  fi
+
+  local tpl="$TEMPLATES/intent.md" out="$dir/intent.md"
+  [ "$small" = 1 ] && [ "$spike" = 1 ] && die "choose --small or --spike, not both"
+  [ "$small" = 1 ] && { tpl="$TEMPLATES/change.md"; out="$dir/change.md"; }
+  [ "$spike" = 1 ] && { tpl="$TEMPLATES/spike.md"; out="$dir/spike.md"; }
+  mkdir -p "$dir"
+  ID="$id" SLUG="$slug" TITLE="$title" DATE="$(date +%F)" awk '
+    { gsub(/\{\{ID\}\}/, ENVIRON["ID"]); gsub(/\{\{SLUG\}\}/, ENVIRON["SLUG"]);
+      gsub(/\{\{DATE\}\}/, ENVIRON["DATE"]);
+      while ((i = index($0, "{{TITLE}}")) > 0) $0 = substr($0, 1, i-1) ENVIRON["TITLE"] substr($0, i+9);
+      print }' "$tpl" > "$out"
+  echo "$out"
+}
+
+approved_ok() {  # approved and body unchanged since approval?
+  local f="$1" want have
+  [ "$(sdlc_fm_get "$f" status)" = "approved" ] || return 1
+  want="$(sdlc_fm_get "$f" approved_sha256)"
+  have="$(sdlc_body_hash < "$f")"
+  [ -n "$want" ] && [ "$want" = "$have" ]
+}
+
+upstream_file() {  # upstream_file <dir> <artifact>
+  local d="$1" a="$2" u
+  if [ "$a" = "review" ] && [ -f "$d/change.md" ]; then echo "$d/change.md"; return; fi
+  u="$(sdlc_upstream_of "$a")"; [ -n "$u" ] && echo "$d/$u.md" || true
+}
+
+upstream_ok() {  # the upstream artifact is still exactly what was approved when this one was
+  local d="$1" a="$2" up pin
+  up="$(upstream_file "$d" "$a")"; [ -n "$up" ] || return 0
+  [ -f "$up" ] || return 1
+  pin="$(sdlc_fm_get "$d/$a.md" upstream_sha256)"
+  [ -n "$pin" ] && [ "$pin" = "$(sdlc_body_hash < "$up")" ]
+}
+
+gate_state() {  # gate_state <dir> <artifact> -> ok | missing | waiting:<status> | changed | upstream
+  local d="$1" a="$2" f="$1/$2.md"
+  [ -f "$f" ] || { echo missing; return; }
+  local s; s="$(sdlc_fm_get "$f" status)"
+  [ "$s" = "approved" ] || { echo "waiting:${s:-no status}"; return; }
+  approved_ok "$f" || { echo changed; return; }
+  upstream_ok "$d" "$a" || { echo upstream; return; }
+  echo ok
+}
+
+describe() {  # describe <artifact> <state>
+  case "$2" in
+    missing) echo "$1: not started";;
+    waiting:*) echo "$1: ${2#waiting:} (waiting for approval)";;
+    changed) echo "$1: CHANGED AFTER APPROVAL - set status: draft and re-approve";;
+    upstream) echo "$1: the artifact before it changed since approval - re-approve $1";;
+  esac
+}
+
+stage_of() {
+  local d="$1" a st gates="intent spec plan"
+  if [ -f "$d/spike.md" ]; then echo "spike: $(sdlc_fm_get "$d/spike.md" status) (throwaway - only spike.md merges)"; return; fi
+  [ -f "$d/change.md" ] && gates="change"
+  for a in $gates; do
+    st="$(gate_state "$d" "$a")"; [ "$st" = ok ] || { describe "$a" "$st"; return; }
+  done
+  [ -f "$d/verify.md" ] || { echo "build: in progress (no verify.md yet)"; return; }
+  local s; s="$(sdlc_fm_get "$d/verify.md" status)"
+  [ "$s" = "ready-for-review" ] || { echo "verify: ${s:-no status}"; return; }
+  st="$(gate_state "$d" review)"
+  [ "$st" = ok ] && echo "done: approved for release (merge the PR)" || describe review "$st"
+}
+
+cmd_status() {
+  local d found=0
+  for d in work/*/; do
+    [ -d "$d" ] || continue; found=1; d="${d%/}"
+    printf '%-40s %s\n' "$d" "$(stage_of "$d")"
+  done
+  [ "$found" = 1 ] || echo "No work items yet. Start one with: scripts/sdlc new <slug>"
+}
+
+cmd_check() {  # integrity of every approval; optional signature check for approvals added since <ref>
+  local since="" f bad=0 d a
+  [ "${1:-}" = "--signed-since" ] && since="${2:-}"
+  for f in work/*/*.md; do
+    [ -f "$f" ] || continue
+    [ "$(sdlc_fm_get "$f" status)" = "approved" ] || continue
+    d="$(dirname "$f")"; a="$(basename "$f" .md)"
+    approved_ok "$f" || { echo "sdlc check: $f is marked approved but its content changed since approval" >&2; bad=1; continue; }
+    upstream_ok "$d" "$a" || { echo "sdlc check: $f was approved against an earlier version of the artifact before it" >&2; bad=1; }
+  done
+  if [ -n "$since" ] && [ "${REQUIRE_SIGNED_APPROVALS:-0}" = "1" ]; then
+    local signers="${SDLC_SIGNERS_FILE:-.sdlc/allowed_signers}" c
+    [ -s "$signers" ] || { echo "sdlc check: REQUIRE_SIGNED_APPROVALS=1 but $signers is empty" >&2; return 1; }
+    for c in $(git rev-list "$since..HEAD"); do
+      if git show --format= --text --no-textconv --no-ext-diff "$c" -- 'work/*.md' | tr -d '\r' | grep -Eq '^\+[[:space:]]*status:[[:space:]]*["'"'"']?approved'; then
+        git -c gpg.format=ssh -c gpg.ssh.program=ssh-keygen -c "gpg.ssh.allowedSignersFile=$signers" verify-commit "$c" >/dev/null 2>&1 \
+          || { echo "sdlc check: commit $c approves a gate but is not signed by an allowed approver" >&2; bad=1; }
+      fi
+    done
+  fi
+  [ "$bad" = 0 ] && echo "sdlc check: all approvals intact"
+  return $bad
+}
+
+cmd_approve() {
+  local dir="${1:-}" art="${2:-}"
+  [ -n "$dir" ] && [ -n "$art" ] || die "usage: sdlc approve <work/NNN-slug> <intent|spec|plan|change|review>"
+  case "$art" in intent|spec|plan|change|review) ;; *) die "can only approve intent, spec, plan, change or review";; esac
+  dir="${dir%/}"
+  local f="$dir/$art.md"
+  [ -f "$f" ] || die "$f not found"
+  [ "$(gate_state "$dir" "$art")" != ok ] || die "$f is already approved"
+
+  # Gates in order: everything before this one must be approved and unchanged.
+  local order="intent spec plan" g
+  [ -f "$dir/change.md" ] && order="change"
+  if [ "$art" = review ]; then
+    for g in $order; do [ "$(gate_state "$dir" "$g")" = ok ] || die "approve $g first ($(describe "$g" "$(gate_state "$dir" "$g")"))"; done
+    [ "$(sdlc_fm_get "$dir/verify.md" status 2>/dev/null)" = "ready-for-review" ] || die "verify.md is not ready-for-review yet"
+  else
+    for g in $order; do [ "$g" = "$art" ] && break; [ "$(gate_state "$dir" "$g")" = ok ] || die "approve $g first"; done
+  fi
+
+  require_person "approve"
+  local who up; who="$(git config user.name || echo unknown) <$(git config user.email || echo unknown)>"
+  fm_set "$f" status approved
+  fm_set "$f" approved_by "\"${who//\"/}\""
+  fm_set "$f" approved_on "\"$(date -u +%FT%TZ)\""
+  up="$(upstream_file "$dir" "$art")"
+  [ -n "$up" ] && fm_set "$f" upstream_sha256 "$(sdlc_body_hash < "$up")"
+  fm_set "$f" approved_sha256 "$(sdlc_body_hash < "$f")"
+  [ "$(sdlc_fm_get "$f" status)" = "approved" ] || { git checkout -q -- "$f" 2>/dev/null || true; die "$f has no front matter block, so it cannot be approved"; }
+  git add -- "$f"
+  local sign=(); [ "${REQUIRE_SIGNED_APPROVALS:-0}" = "1" ] && sign=(-S)
+  SDLC_APPROVING=1 git commit -q ${sign[@]+"${sign[@]}"} -m "[$(basename "$dir")] approve $art" -m "Approved-by: $who" -- "$f"
+  echo "Approved and committed $f"
+}
+
+cmd_verify() {
+  if [ -z "${VERIFY_CMD:-}" ]; then
+    echo "sdlc verify: WARNING - no VERIFY_CMD committed in .sdlc/config, so nothing was checked." >&2
+    echo "  Run the sdlc-setup skill, set VERIFY_CMD, and commit it." >&2
+    return 0
+  fi
+  echo "\$ $VERIFY_CMD"
+  bash -c "$VERIFY_CMD"
+  echo "sdlc verify: PASSED"
+}
+
+norm_path() {  # repo-relative path of a tracked file, resolved from where the command was run
+  local p="$1" rel
+  rel="$(cd "$START_DIR" && git ls-files --full-name --error-unmatch -- "$p" 2>/dev/null)" \
+    || die "$p is not a committed file. Commit the test first, then lock it."
+  printf '%s' "$rel"
+}
+
+cmd_lock() {
+  local p="${1:-}"; [ -n "$p" ] || die "usage: sdlc lock-test <path>"
+  p="$(norm_path "$p")"
+  git diff --quiet -- "$p" || die "$p has uncommitted changes. Commit the failing test first, then lock it."
+  local blob; blob="$(git rev-parse "HEAD:$p")"
+  mkdir -p .sdlc; touch "$LOCKED"
+  if awk -F'\t' -v p="$p" '$1==p{f=1} END{exit !f}' "$LOCKED"; then echo "$p is already locked"; return; fi
+  printf '%s\t%s\n' "$p" "$blob" >> "$LOCKED"
+  echo "Locked $p. Commit it: git add $LOCKED && git commit -m 'lock test $p'"
+}
+
+cmd_unlock() {
+  local p="${1:-}"; [ -n "$p" ] || die "usage: sdlc unlock-test <path>"
+  p="$(norm_path "$p")"
+  require_person "unlock-test"
+  awk -F'\t' -v p="$p" '$1!=p' "$LOCKED" > "$LOCKED.tmp" || true; mv "$LOCKED.tmp" "$LOCKED"
+  echo "Unlocked $p. Commit with: SDLC_ALLOW_PROTECTED=1 git commit $LOCKED -m 'unlock test'"
+}
+
+# ---- TDD evidence -----------------------------------------------------------------------------
+# Appends a record to work/NNN-slug/tdd.log. The log is evidence for the reviewer, not proof:
+# the reviewer checks each behaviour has a red entry before its green entry.
+cmd_tdd() {
+  local want="$1" dir="${2:-}"; shift 2 || true
+  [ -n "$dir" ] && [ -d "$dir" ] || die "usage: sdlc $want <work/NNN-slug> -- <test command>"
+  [ "${1:-}" = "--" ] && shift
+  [ $# -gt 0 ] || die "give the test command after --, e.g. sdlc $want $dir -- npm test -- -t 'shows error summary'"
+  local log="$dir/tdd.log" out rc
+  out="$(mktemp "${TMPDIR:-/tmp}/sdlc.XXXXXX")"
+  set +e; "$@" > "$out" 2>&1; rc=$?; set -e
+  {
+    printf '## %s %s  exit=%s  at %s  (HEAD %s)\n' "$(printf '%s' "$want" | tr a-z A-Z)" "$(date -u +%FT%TZ)" "$rc" "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" "$(git rev-parse --short HEAD 2>/dev/null)"
+    printf '$ %s\n' "$*"
+    tail -n 15 "$out" | sed 's/^/    /'
+    echo
+  } >> "$log"
+  rm -f "$out"
+  if [ "$want" = red ]; then
+    [ $rc -ne 0 ] || die "the test PASSED, so it is not red. Either the behaviour already exists or the test does not test it. (Logged in $log.)"
+    echo "RED confirmed (exit $rc) - logged in $log. Commit the test now: git add -A && git commit -m 'test: ...'"
+  else
+    [ $rc -eq 0 ] || die "the test FAILED (exit $rc), so it is not green yet. (Logged in $log.)"
+    echo "GREEN confirmed - logged in $log. Commit, then refactor with the tests still green."
+  fi
+}
+
+# ---- Architecture decision records --------------------------------------------------------------
+cmd_adr() {
+  local title="$*"; [ -n "$title" ] || die "usage: sdlc adr <title>"
+  title="$(printf '%s' "$title" | tr -d '\r\n"' | cut -c1-100)"
+  mkdir -p docs/adr
+  local n slug f
+  n="$( (ls -1 docs/adr 2>/dev/null || true) | grep -Eo '^[0-9]{4}' | sort -n | tail -1 || true)"
+  n="$(printf '%04d' $(( 10#${n:-0} + 1 )))"
+  slug="$(printf '%s' "$title" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-50)"
+  f="docs/adr/${n}-${slug:-decision}.md"
+  N="$n" TITLE="$title" DATE="$(date +%F)" awk '
+    { gsub(/\{\{N\}\}/, ENVIRON["N"]); gsub(/\{\{DATE\}\}/, ENVIRON["DATE"]);
+      while ((i = index($0, "{{TITLE}}")) > 0) $0 = substr($0, 1, i-1) ENVIRON["TITLE"] substr($0, i+9);
+      print }' "$TEMPLATES/adr.md" > "$f"
+  echo "$f"
+}
+
+# ---- Delivery report (DORA measures and stage times, from git history) -------------------------
+cmd_report() {
+  local days="${1:-90}" main="${DEFAULT_BRANCH:-main}" since now
+  [[ "$days" =~ ^[0-9]+$ ]] || die "usage: sdlc report [days]"
+  now="$(date +%s)"; since=$(( now - days * 86400 ))
+  git rev-parse --verify -q "$main" >/dev/null || die "no branch $main"
+  local deploys; deploys="$(git log --first-parent "$main" --since="@$since" --format=%ct | wc -l | tr -d ' ')"
+  echo "# Delivery report - last $days days (branch $main)"
+  echo
+  echo "Changes landed on $main: $deploys  (about $(awk -v n="$deploys" -v d="$days" 'BEGIN{printf "%.1f", n/(d/7)}') a week)"
+  if git tag -l 'release-*' 'v*' | grep -q .; then
+    echo "Tagged releases: $(git log --tags --simplify-by-decoration --since="@$since" --format=%ct "$main" | wc -l | tr -d ' ')"
+  fi
+  echo
+  echo "| Work item | Route | Started | Idea to merged | Code to merged | Stage times (hours) | TDD red/green |"
+  echo "|---|---|---|---|---|---|---|"
+  local d id route start merged first_code stages red green tot_lead=0 n_lead=0 maint=0 caused=0 restore_tot=0 n_restore=0
+  for d in work/*/; do
+    [ -d "$d" ] || continue; d="${d%/}"; id="$(basename "$d")"
+    route=full; [ -f "$d/change.md" ] && route=small; [ -f "$d/spike.md" ] && route=spike
+    start="$(git log --reverse --format=%ct -- "$d" | head -1)"; [ -n "$start" ] || continue
+    [ "$start" -ge "$since" ] || continue
+    merged="$(git log --first-parent "$main" --format=%ct --reverse -- "$d" | head -1)"
+    first_code="$(git log --reverse --format=%ct "${main}...sdlc/$id" -- . ':(exclude)work' 2>/dev/null | head -1)"
+    stages=""
+    local a t prev="$start"
+    for a in intent spec plan change review; do
+      t="$(git log --reverse --all --format=%ct --grep="approve $a\$" -- "$d/$a.md" 2>/dev/null | tail -1)"
+      [ -n "$t" ] && { stages="${stages}${a}:$(( (t - prev) / 3600 )) "; prev="$t"; }
+    done
+    red=0; green=0
+    if [ -f "$d/tdd.log" ]; then red="$(grep -Ec '^## RED .* exit=[1-9]' "$d/tdd.log" || true)"; green="$(grep -Ec '^## GREEN .* exit=0 ' "$d/tdd.log" || true)"; fi
+    local lead="-" code="-"
+    if [ -n "$merged" ]; then
+      lead="$(( (merged - start) / 3600 ))h"; tot_lead=$(( tot_lead + merged - start )); n_lead=$((n_lead+1))
+      [ -n "$first_code" ] && code="$(( (merged - first_code) / 3600 ))h"
+    fi
+    if [ -f "$d/intent.md" ] && [ "$(sdlc_fm_get "$d/intent.md" source)" = maintain ]; then
+      maint=$((maint+1))
+      [ -n "$(sdlc_fm_get "$d/intent.md" caused_by)" ] && caused=$((caused+1))
+      [ -n "$merged" ] && { restore_tot=$(( restore_tot + merged - start )); n_restore=$((n_restore+1)); }
+    fi
+    echo "| $id | $route | $(date -d "@$start" +%F 2>/dev/null || date -r "$start" +%F) | $lead | $code | ${stages:--} | $red/$green |"
+  done
+  echo
+  [ "$n_lead" -gt 0 ] && echo "Median-ish lead time (mean): $(( tot_lead / n_lead / 3600 )) hours from idea to merged, over $n_lead items"
+  local merged_items="$n_lead"
+  if [ "$merged_items" -gt 0 ]; then
+    echo "Change failure rate: $caused of $merged_items merged items later caused a maintain item (set caused_by: NNN in the maintain intent)"
+  fi
+  [ "$n_restore" -gt 0 ] && echo "Time to restore (mean, maintain items): $(( restore_tot / n_restore / 3600 )) hours from detection to fix merged"
+  echo
+  echo "Notes: 'landed on $main' stands in for deployments unless you tag releases (release-* or v*)."
+  echo "TDD column counts confirmed red (failing) and green (passing) runs; the reviewer checks each red came before its green."
+}
+
+case "${1:-help}" in
+  new) shift; cmd_new "$@";;
+  status) cmd_status;;
+  check) shift; cmd_check "$@";;
+  approve) shift; cmd_approve "$@";;
+  verify) cmd_verify;;
+  lock-test) shift; cmd_lock "$@";;
+  unlock-test) shift; cmd_unlock "$@";;
+  red) shift; cmd_tdd red "$@";;
+  green) shift; cmd_tdd green "$@";;
+  adr) shift; cmd_adr "$@";;
+  report) shift; cmd_report "$@";;
+  *) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//';;
+esac

@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Deterministic guardrails. No AI. The same for every agent and every person.
+#
+# Locally this is a fast speed bump that catches mistakes early. Anyone with a shell can get past a
+# local hook (git commit --no-verify). The same checks run in CI from the BASE branch's copy of this
+# file (the sdlc-guardrails workflow), where a PR cannot change them, and you review the PR.
+#
+# Rules and locked tests are read from the last commit (HEAD), not the working tree, so editing
+# those files cannot switch the rules off for the same commit. Diffs ignore .gitattributes tricks.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT" || exit 1
+HOOKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$HOOKDIR/lib.sh"
+sdlc_load_config
+fail=0
+say() { echo "pre-commit: $*" >&2; }
+
+# Staged changes as status/path pairs, NUL-separated so odd file names cannot dodge the checks.
+ST=(); PA=()
+while IFS= read -r -d '' st && IFS= read -r -d '' path; do ST+=("$st"); PA+=("$path"); done \
+  < <(sdlc_diff --cached --name-status --no-renames -z)
+N=${#PA[@]}
+
+status_of() { local i=0; while [ $i -lt $N ]; do [ "${PA[$i]}" = "$1" ] && { echo "${ST[$i]}"; return; }; i=$((i+1)); done; }
+only_added_lines() { ! sdlc_diff --cached -U0 -- "$1" | grep -q '^-[^-]'; }
+
+# 1. Protected paths
+if [ "${SDLC_ALLOW_PROTECTED:-0}" != "1" ]; then
+  i=0; while [ $i -lt $N ]; do
+    path="${PA[$i]}"
+    if sdlc_is_protected "$path"; then
+      if [ "$path" = ".sdlc/locked-tests" ] && only_added_lines "$path"; then :; else
+        say "BLOCKED - protected path changed: $path"
+        say "  Why: the loop's own rules and agent settings. Route: you make this change on purpose and commit with SDLC_ALLOW_PROTECTED=1."
+        fail=1
+      fi
+    fi
+    i=$((i+1))
+  done
+fi
+
+# 2. Locked tests: written first for a bug fix; the fix must not change them
+if [ "${SDLC_ALLOW_PROTECTED:-0}" != "1" ]; then
+  while IFS=$'\t' read -r lp lh; do
+    [ -n "$lp" ] || continue
+    st="$(status_of "$lp")"
+    if [ -n "$st" ] && [ "$st" != "A" ]; then
+      say "BLOCKED - locked test changed: $lp"; fail=1; continue
+    fi
+    if [ -n "${lh:-}" ]; then
+      cur="$(git rev-parse -q --verify ":$lp" 2>/dev/null || echo missing)"
+      if [ "$cur" != "$lh" ]; then say "BLOCKED - locked test $lp differs from the version that was locked"; fail=1; fi
+    fi
+  done <<< "$(sdlc_locked_text)"
+  [ "$fail" = 1 ] && say "  Route: fix the code, not the test. A person can run scripts/sdlc unlock-test <path>."
+  if ! only_added_lines .sdlc/locked-tests; then
+    say "BLOCKED - lines removed or changed in .sdlc/locked-tests. Route: scripts/sdlc unlock-test (person only)."
+    fail=1
+  fi
+fi
+
+# 3. Approvals only through 'scripts/sdlc approve'; approved content must not change afterwards
+if [ "${SDLC_APPROVING:-0}" != "1" ]; then
+  if sdlc_diff --cached -U0 -- 'work/*.md' | tr -d '\r' | grep -Eiq \
+     '^\+[[:space:]]*(status:[[:space:]]*["'"'"']?approved|(approved_(by|on|sha256)|upstream_sha256):)'; then
+    say "BLOCKED - an artifact was marked approved outside 'scripts/sdlc approve'."
+    say "  Why: only a person approves a gate. Route: the approver runs scripts/sdlc approve <work/NNN-slug> <artifact>."
+    fail=1
+  fi
+fi
+i=0; while [ $i -lt $N ]; do
+  path="${PA[$i]}"; st="${ST[$i]}"; i=$((i+1))
+  case "$path" in work/*.md) ;; *) continue;; esac
+  [ "$st" = "D" ] && continue
+  tmp="$(mktemp "${TMPDIR:-/tmp}/sdlc.XXXXXX")"; git show ":$path" > "$tmp"
+  if [ "$(sdlc_fm_get "$tmp" status)" = "approved" ] && \
+     [ "$(sdlc_fm_get "$tmp" approved_sha256)" != "$(sdlc_body_hash < "$tmp")" ]; then
+    say "BLOCKED - $path was changed after it was approved."
+    say "  Route: set 'status: draft' in it (so it goes back through the gate), commit, then the approver re-approves."
+    fail=1
+  fi
+  rm -f "$tmp"
+done
+
+# 4. Secrets. gitleaks is much better than the fallback patterns; install it if you can.
+if [ "${SDLC_ALLOW_SECRETS:-0}" != "1" ]; then
+  i=0; while [ $i -lt $N ]; do
+    base="${PA[$i]##*/}"
+    if [ "${ST[$i]}" != "D" ]; then
+      case "$base" in
+        .env.example|.env.sample|.env.template) ;;
+        .env|.env.*|*.pem|*.key|*.p12|*.pfx|id_rsa|id_ed25519|*.tfstate|credentials|.npmrc|.pypirc)
+          say "BLOCKED - ${PA[$i]} is a file type that usually holds secrets."; fail=1;;
+      esac
+    fi
+    i=$((i+1))
+  done
+  if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --pre-commit --staged --redact --no-banner >/dev/null 2>&1 \
+      || gitleaks protect --staged --redact --no-banner >/dev/null 2>&1 \
+      || { say "BLOCKED - gitleaks found a possible secret. Run: gitleaks git --pre-commit --staged -v"; fail=1; }
+  fi
+  excl=(); set -f; for p in $SECRETS_IGNORE_PATHS; do excl+=(":(exclude)$p"); done; set +f
+  added="$(sdlc_diff --cached -U0 -- . ${excl[@]+"${excl[@]}"} | grep -E '^\+' | grep -Ev '^\+\+\+ ' || true)"
+  q="[\"']"
+  if printf '%s\n' "$added" | grep -Eiq \
+       "AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[0-9a-z-]{10,}|gh[pousr]_[0-9a-z]{30,}|github_pat_[0-9a-z_]{20,}|sk-(ant-|proj-)?[a-z0-9_-]{20,}|sk_live_[0-9a-z]{16,}|AccountKey=[a-z0-9+/=]{20,}|(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)[a-z0-9_]*${q}?[[:space:]]*[:=][[:space:]]*${q}[^\"'\$]{8,}${q}" \
+     || printf '%s\n' "$added" | grep -Eq '^\+[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY)[A-Z0-9_]*=[^[:space:]$"'"'"'][^[:space:]]{7,}'; then
+    say "BLOCKED - something that looks like a secret is being committed."
+    say "  Route: move it to a secret store. False positive? Add the path to SECRETS_IGNORE_PATHS in .sdlc/config,"
+    say "  or commit once with SDLC_ALLOW_SECRETS=1 and say why in the PR."
+    fail=1
+  fi
+fi
+
+# 5. Optional: run the verify command on every commit
+if [ "$fail" = 0 ] && [ "${VERIFY_ON_COMMIT:-0}" = "1" ] && [ "${SDLC_APPROVING:-0}" != "1" ] && [ -n "$VERIFY_CMD" ]; then
+  bash -c "$VERIFY_CMD" || { say "BLOCKED - VERIFY_CMD failed."; fail=1; }
+fi
+
+exit $fail

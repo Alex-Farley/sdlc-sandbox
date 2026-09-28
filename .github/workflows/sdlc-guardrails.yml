@@ -1,0 +1,82 @@
+# Free: no AI. The checks a PR must not be able to switch off.
+#
+# Runs on pull_request_target, so GitHub uses THIS FILE FROM THE BASE BRANCH, not the PR's copy,
+# and the scripts it runs are also taken from the base branch. The PR's files are only ever read
+# as data here: nothing from the PR is executed. No secrets are used.
+#
+# Blocks: changes to protected paths (the loop's rules, agent settings, workflows), changes to
+# locked tests, approvals edited by hand or changed after approval, obvious secrets, and (if
+# REQUIRE_SIGNED_APPROVALS=1) approval commits not signed by a key in .sdlc/allowed_signers.
+# A PR that deliberately changes protected paths fails here by design: you review it and merge
+# with the ruleset's admin bypass. Dependabot PRs that only bump pinned actions are allowed.
+name: sdlc-guardrails
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the PR as data (never executed)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Load trusted scripts and config from the base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git cat-file -e "$BASE_SHA^{commit}" || { echo "::error::Base commit not in this clone (fork out of date?)"; exit 1; }
+          T="$RUNNER_TEMP/trusted"; mkdir -p "$T"
+          git archive "$BASE_SHA" .sdlc/hooks .sdlc/config scripts/sdlc | tar -x -C "$T"
+          git show "$BASE_SHA:.sdlc/locked-tests" > "$T/locked-tests" 2>/dev/null || : > "$T/locked-tests"
+          git show "$BASE_SHA:.sdlc/allowed_signers" > "$T/allowed_signers" 2>/dev/null || : > "$T/allowed_signers"
+      - name: Is this a Dependabot bump of pinned actions only?
+        id: bot
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          ok=false
+          if [ "$AUTHOR" = "dependabot[bot]" ]; then
+            files="$(git diff --name-only "$BASE_SHA" HEAD)"
+            other="$(printf '%s\n' "$files" | grep -Ev '^\.github/(workflows/[^/]+\.ya?ml|dependabot\.yml)$' || true)"
+            lines="$(git diff --text --no-textconv --no-ext-diff -U0 "$BASE_SHA" HEAD | grep -E '^[+-][^+-]' | grep -Ev '^[+-][[:space:]]*(-[[:space:]]*)?uses:' || true)"
+            [ -z "$other" ] && [ -z "$lines" ] && ok=true
+          fi
+          echo "allow=$ok" >> "$GITHUB_OUTPUT"
+      - name: Spike branches merge findings only
+        if: startsWith(github.event.pull_request.head.ref, 'spike/')
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          outside="$(git diff --name-only "$BASE_SHA" HEAD | grep -v '^work/' || true)"
+          if [ -n "$outside" ]; then
+            echo "::error::Spike code is throwaway: only the work/ folder (the findings) may merge. Remove:"; echo "$outside"; exit 1
+          fi
+      - name: Guardrails on the whole PR diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ALLOW: ${{ steps.bot.outputs.allow }}
+        run: |
+          T="$RUNNER_TEMP/trusted"
+          head="$(git rev-parse HEAD)"
+          git reset -q --soft "$BASE_SHA"
+          extra=""; [ "$ALLOW" = "true" ] && { echo "Dependabot action bump: protected-path check relaxed"; extra="SDLC_ALLOW_PROTECTED=1"; }
+          rc=0
+          env $extra SDLC_CONFIG_FILE="$T/.sdlc/config" SDLC_LOCKED_FILE="$T/locked-tests" SDLC_APPROVING=1 \
+            bash "$T/.sdlc/hooks/pre-commit" || rc=$?
+          git reset -q --soft "$head"
+          exit $rc
+      - name: Approvals intact (and signed, if required)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          T="$RUNNER_TEMP/trusted"
+          SDLC_LIB="$T/.sdlc/hooks/lib.sh" SDLC_CONFIG_FILE="$T/.sdlc/config" SDLC_SIGNERS_FILE="$T/allowed_signers" \
+            bash "$T/scripts/sdlc" check --signed-since "$BASE_SHA"

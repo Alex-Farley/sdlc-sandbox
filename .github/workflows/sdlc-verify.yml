@@ -1,0 +1,26 @@
+# Free: no AI. Builds and tests the PR (this runs the PR's code, so it has no secrets and a
+# read-only token). A PR could edit this file, but that is a change to .github/, which the
+# sdlc-guardrails check (run from the base branch) blocks. Make both checks required.
+name: sdlc-verify
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify (command taken from the base branch config)
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          T="$RUNNER_TEMP/trusted"; mkdir -p "$T"
+          if git cat-file -e "origin/$BASE:.sdlc/config" 2>/dev/null; then
+            git archive "origin/$BASE" .sdlc/hooks .sdlc/config | tar -x -C "$T"
+          else cp -R .sdlc "$T/"; fi
+          SDLC_LIB="$T/.sdlc/hooks/lib.sh" SDLC_CONFIG_FILE="$T/.sdlc/config" bash scripts/sdlc verify

@@ -1,0 +1,57 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Edit(/.sdlc/**)",
+      "Edit(/.claude/**)",
+      "Edit(/.codex/**)",
+      "Edit(/.gemini/**)",
+      "Edit(/.agents/**)",
+      "Edit(/.github/**)",
+      "Edit(/scripts/sdlc)",
+      "Edit(/scripts/github-protect.sh)",
+      "Edit(/CLAUDE.md)",
+      "Edit(/REVIEW.md)",
+      "Edit(/maintain/runbooks/**)",
+      "Edit(**/.gitattributes)",
+      "Bash(git config user*)",
+      "Bash(git config core*)",
+      "Bash(git config gpg*)",
+      "Bash(git -c *)",
+      "Bash(git commit -n *)",
+      "Bash(git commit --no-verify *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr review *)",
+      "Bash(scripts/sdlc approve *)",
+      "Bash(scripts/sdlc unlock-test *)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": ["gh"],
+    "filesystem": {
+      "denyRead": ["./.env", "~/.ssh", "~/.aws"]
+    },
+    "network": {
+      "allowedDomains": ["github.com", "api.github.com", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "rubygems.org"]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [{ "type": "command", "command": "command -v python3 >/dev/null 2>&1 || { echo 'sdlc guard needs python3 - blocking' >&2; exit 2; }; python3 \"$CLAUDE_PROJECT_DIR/.sdlc/hooks/agent-guard.py\"" }]
+      }
+    ]
+  }
+}

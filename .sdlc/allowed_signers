@@ -1,0 +1,3 @@
+# Approvers' SSH signing keys, one per line: <email> <key-type> <public-key>
+# Used when REQUIRE_SIGNED_APPROVALS="1". See the guide ("Signed approvals").
+# e.g. alex@example.org ssh-ed25519 AAAAC3Nza...

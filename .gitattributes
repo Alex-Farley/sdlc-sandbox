@@ -1,0 +1,6 @@
+# Keep scripts and artifacts on LF so they work on Windows (Git Bash) as well as macOS and Linux.
+.sdlc/**      text eol=lf
+scripts/sdlc  text eol=lf
+work/**/*.md  text eol=lf
+evals/**      text eol=lf
+maintain/*.py text eol=lf
