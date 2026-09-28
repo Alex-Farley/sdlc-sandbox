@@ -1,0 +1,6 @@
+## RED 2026-09-28T17:32:17Z  exit=1  at sdlc/001-readme-purpose  (HEAD 6418b8b)
+$ grep -q sandbox for trying out the AI-native SDLC pack README.md
+
+## GREEN 2026-09-28T17:32:23Z  exit=0  at sdlc/001-readme-purpose  (HEAD f3e3377)
+$ grep -q sandbox for trying out the AI-native SDLC pack README.md
+
