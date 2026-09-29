@@ -5,8 +5,9 @@
 # local hook (git commit --no-verify). The same checks run in CI from the BASE branch's copy of this
 # file (the sdlc-guardrails workflow), where a PR cannot change them, and you review the PR.
 #
-# Rules and locked tests are read from the last commit (HEAD), not the working tree, so editing
-# those files cannot switch the rules off for the same commit. Diffs ignore .gitattributes tricks.
+# Rules and locked tests are read from the last commit (HEAD), not the working tree, and the
+# installed hook runner (.git/sdlc-hooks) runs this file and lib.sh from HEAD too, so editing
+# them in the working tree cannot switch the checks off. Diffs ignore .gitattributes tricks.
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT" || exit 1
 HOOKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +23,10 @@ while IFS= read -r -d '' st && IFS= read -r -d '' path; do ST+=("$st"); PA+=("$p
   < <(sdlc_diff --cached --name-status --no-renames -z)
 N=${#PA[@]}
 
-status_of() { local i=0; while [ $i -lt $N ]; do [ "${PA[$i]}" = "$1" ] && { echo "${ST[$i]}"; return; }; i=$((i+1)); done; }
+status_of() {  # case-insensitive: on macOS/Windows Tests/x.py and tests/x.py are the same file
+  local i=0 want; want="$(sdlc_lc "$1")"
+  while [ $i -lt $N ]; do [ "$(sdlc_lc "${PA[$i]}")" = "$want" ] && { echo "${ST[$i]}"; return; }; i=$((i+1)); done
+}
 only_added_lines() { ! sdlc_diff --cached -U0 -- "$1" | grep -q '^-[^-]'; }
 
 # 1. Protected paths
@@ -40,20 +44,41 @@ if [ "${SDLC_ALLOW_PROTECTED:-0}" != "1" ]; then
   done
 fi
 
+# 1b. Paths that differ only in case from another file. macOS and Windows treat them as the same
+#     file, so they can overwrite a file (or land in a protected folder) that the checks never saw.
+dups="$(git ls-files | tr '[:upper:]' '[:lower:]' | sort | uniq -d)"
+if [ -n "$dups" ]; then
+  i=0; while [ $i -lt $N ]; do
+    lp="$(sdlc_lc "${PA[$i]}")"
+    if [ "${ST[$i]}" = "A" ] && printf '%s\n' "$dups" | grep -qxF -- "$lp"; then
+      say "BLOCKED - ${PA[$i]} differs only in upper/lower case from another file. On macOS and Windows they are the same file. Rename one."
+      fail=1
+    fi
+    i=$((i+1))
+  done
+fi
+
+# 1c. No symlinks under work/ (an approval must be a real file in its own work item)
+while read -r mode _ _ path; do
+  [ "$mode" = 120000 ] || continue
+  case "$path" in work/*) say "BLOCKED - $path is a symlink. Work items must hold real files."; fail=1;; esac
+done < <(git diff --cached --raw --no-renames --no-abbrev | awk '{sub(/^:/,""); print $2, $3, $4, $6}')
+
 # 2. Locked tests: written first for a bug fix; the fix must not change them
 if [ "${SDLC_ALLOW_PROTECTED:-0}" != "1" ]; then
+  locked_fail=0
   while IFS=$'\t' read -r lp lh; do
     [ -n "$lp" ] || continue
     st="$(status_of "$lp")"
     if [ -n "$st" ] && [ "$st" != "A" ]; then
-      say "BLOCKED - locked test changed: $lp"; fail=1; continue
+      say "BLOCKED - locked test changed: $lp"; fail=1; locked_fail=1; continue
     fi
     if [ -n "${lh:-}" ]; then
       cur="$(git rev-parse -q --verify ":$lp" 2>/dev/null || echo missing)"
-      if [ "$cur" != "$lh" ]; then say "BLOCKED - locked test $lp differs from the version that was locked"; fail=1; fi
+      if [ "$cur" != "$lh" ]; then say "BLOCKED - locked test $lp differs from the version that was locked"; fail=1; locked_fail=1; fi
     fi
   done <<< "$(sdlc_locked_text)"
-  [ "$fail" = 1 ] && say "  Route: fix the code, not the test. A person can run scripts/sdlc unlock-test <path>."
+  [ "$locked_fail" = 1 ] && say "  Route: fix the code, not the test. A person can run scripts/sdlc unlock-test <path>."
   if ! only_added_lines .sdlc/locked-tests; then
     say "BLOCKED - lines removed or changed in .sdlc/locked-tests. Route: scripts/sdlc unlock-test (person only)."
     fail=1
@@ -75,8 +100,8 @@ i=0; while [ $i -lt $N ]; do
   [ "$st" = "D" ] && continue
   tmp="$(mktemp "${TMPDIR:-/tmp}/sdlc.XXXXXX")"; git show ":$path" > "$tmp"
   if [ "$(sdlc_fm_get "$tmp" status)" = "approved" ] && \
-     [ "$(sdlc_fm_get "$tmp" approved_sha256)" != "$(sdlc_body_hash < "$tmp")" ]; then
-    say "BLOCKED - $path was changed after it was approved."
+     [ "$(sdlc_fm_get "$tmp" approved_sha256)" != "$(sdlc_approval_hash "$path" < "$tmp")" ]; then
+    say "BLOCKED - $path was changed after it was approved (or copied or moved from another work item)."
     say "  Route: set 'status: draft' in it (so it goes back through the gate), commit, then the approver re-approves."
     fail=1
   fi

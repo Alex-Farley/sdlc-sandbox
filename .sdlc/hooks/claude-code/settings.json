@@ -30,7 +30,19 @@
       "Bash(scripts/sdlc approve *)",
       "Bash(scripts/sdlc unlock-test *)",
       "Bash(curl *)",
-      "Bash(wget *)"
+      "Bash(wget *)",
+      "Edit(/AGENTS.md)",
+      "Edit(/evals/run.sh)",
+      "Bash(gh api *)",
+      "Bash(gh alias *)",
+      "Bash(gh extension *)",
+      "Bash(gh auth *)",
+      "Bash(gh workflow *)",
+      "Bash(git commit-tree *)",
+      "Bash(git update-ref *)",
+      "Bash(git update-index *)",
+      "Bash(git push origin main*)",
+      "Bash(git push origin HEAD:main*)"
     ],
     "disableBypassPermissionsMode": "disable"
   },
@@ -38,19 +50,43 @@
     "enabled": true,
     "failIfUnavailable": false,
     "allowUnsandboxedCommands": false,
-    "excludedCommands": ["gh"],
+    "excludedCommands": [
+      "gh pr create *",
+      "gh pr view *",
+      "gh pr checks *",
+      "gh pr diff *",
+      "gh pr list *",
+      "gh pr comment *",
+      "gh pr status *"
+    ],
     "filesystem": {
-      "denyRead": ["./.env", "~/.ssh", "~/.aws"]
+      "denyRead": [
+        "./.env",
+        "~/.ssh",
+        "~/.aws"
+      ]
     },
     "network": {
-      "allowedDomains": ["github.com", "api.github.com", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "rubygems.org"]
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "rubygems.org"
+      ]
     }
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
-        "hooks": [{ "type": "command", "command": "command -v python3 >/dev/null 2>&1 || { echo 'sdlc guard needs python3 - blocking' >&2; exit 2; }; python3 \"$CLAUDE_PROJECT_DIR/.sdlc/hooks/agent-guard.py\"" }]
+        "matcher": "Edit|Write|NotebookEdit|Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.sdlc/hooks/agent-guard.py\" || { echo 'sdlc guard did not run cleanly - blocking to be safe' >&2; exit 2; }"
+          }
+        ]
       }
     ]
   }

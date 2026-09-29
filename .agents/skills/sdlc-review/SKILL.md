@@ -13,6 +13,10 @@ approve, merge and release decisions.
 2. Push with `git push origin sdlc/NNN-slug` and open a PR to the default branch using
    `.sdlc/templates/pr-body.md`: link intent, spec and plan (or change.md) and verify, five-line summary, manual checks.
    Mark it as agent-authored.
+   Write the PR body to a file inside the repo's `work/NNN-slug/` folder first, then run `gh pr create`
+   **as a command on its own** (not chained with `&&`, `;` or a pipe), so the sandbox lets it run outside
+   (Go tools such as gh fail TLS inside the macOS sandbox). If it still fails, give the person the
+   exact command to run in their own terminal and carry on with part B.
 
 ## B. Review against policy (fresh eyes)
 The agent that wrote the code is a poor reviewer of it. Do this part in a **new session or a
@@ -34,7 +38,8 @@ subagent** with fresh context that reads only the diff, spec.md, REVIEW.md and t
 When a person comments on the PR:
 1. Reply to say what you will change, or why you disagree.
 2. Make the fix, run `scripts/sdlc verify`, push to the PR branch.
-3. If the same kind of comment has come up before, add a line to "Common mistakes" in `AGENTS.md`.
+3. If the same kind of comment has come up before, propose a line for "Common mistakes" in `AGENTS.md`
+   (in review.md). `AGENTS.md` is protected: the person adds it.
 
 ## D. Release gate
 Fill in the "Release" section of `review.md`:
@@ -43,7 +48,9 @@ Fill in the "Release" section of `review.md`:
 - Rollback: the exact command or steps, and whether it has been rehearsed
 - Who approves production release (name or role)
 Then the person approves review.md (`scripts/sdlc approve work/NNN-slug review`), pushes, and
-merges the PR. The merge is the release decision.
+merges the PR. The merge is the release decision. The approval records the commit that was
+reviewed: if any code changes after it, CI fails until review.md is set back to draft, reviewed
+again and re-approved. So finish all fixes before asking for the approval.
 
 ## Hard rules
 - **Never approve, merge or release your own work.** No `gh pr review --approve`, no `gh pr merge`.

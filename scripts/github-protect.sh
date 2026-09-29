@@ -14,8 +14,10 @@
 # (the Claude deny rules block 'gh pr merge'), or give it its own GitHub identity.
 # Private repos on a free personal account cannot use rulesets or branch protection (needs GitHub
 # Pro). Public repos can. This script tells you if GitHub refuses.
-# NOTE: written against GitHub's REST rulesets API; not tested against a live account. Run the dry
-# run first and check the ruleset in Settings > Rules afterwards.
+# Tested live: the ruleset (4.0.1, on a public personal repo). NOT yet tested live: the Actions
+# policy (new in 4.1, written from GitHub's REST docs for /repos/{owner}/{repo}/actions/policies).
+# Run the dry run first, then check Settings > Rules and Settings > Actions > Policies afterwards.
+# Safe to re-run: anything that already exists is left alone.
 set -euo pipefail
 APPLY=0; APPROVALS=0
 while [ $# -gt 0 ]; do
@@ -56,17 +58,57 @@ BODY=$(cat <<JSON
 }
 JSON
 )
+POLICY=$(cat <<'JSON'
+{
+  "name": "sdlc-allow-pull-request-target",
+  "enforcement": "active",
+  "conditions": { "workflow_path": { "include": [".github/workflows/sdlc-guardrails.yml", ".github/workflows/sdlc-ai-review.yml"], "exclude": [] } },
+  "rules": [ { "type": "restrict_action_events", "parameters": { "allowed_events": ["pull_request_target"] } } ]
+}
+JSON
+)
+
 echo "Repository: $REPO ($VIS)"
+echo
+echo "1. Branch ruleset 'sdlc-gates':"
 echo "$BODY"
-[ "$APPLY" = 1 ] || { echo; echo "Dry run. Re-run with --apply to create this ruleset."; exit 0; }
-if ! out="$(printf '%s' "$BODY" | gh api -X POST "repos/$REPO/rulesets" --input - 2>&1)"; then
+echo
+echo "2. Actions policy allowing pull_request_target for the two sdlc workflows only."
+echo "   From 2 November 2026 GitHub turns that trigger off by default on public repos; without this"
+echo "   the guardrails check never runs and every merge needs your bypass."
+echo "$POLICY"
+[ "$APPLY" = 1 ] || { echo; echo "Dry run. Re-run with --apply to create both."; exit 0; }
+
+if gh api "repos/$REPO/rulesets" --jq '.[].name' 2>/dev/null | grep -qx 'sdlc-gates'; then
+  echo "Ruleset 'sdlc-gates' already exists - left as it is (edit it under Settings > Rules > Rulesets)."
+elif ! out="$(printf '%s' "$BODY" | gh api -X POST "repos/$REPO/rulesets" --input - 2>&1)"; then
   echo
-  echo "GitHub refused:"
+  echo "GitHub refused the ruleset:"
   echo "$out"
   if [ "$VIS" = "PRIVATE" ]; then
     echo "This is a private repo: on a free personal account rulesets need GitHub Pro (or make it public)."
   fi
   echo "Until rules are in place, CI still runs, but nothing stops a direct push to main."
   exit 1
+else
+  echo "Ruleset 'sdlc-gates' created. Check it under Settings > Rules > Rulesets."
 fi
-echo "Ruleset 'sdlc-gates' created. Check it under Settings > Rules > Rulesets."
+
+if [ "$VIS" != "PUBLIC" ]; then
+  echo "Private repo: GitHub's default pull_request_target block applies to public repos only, so no Actions policy is needed."
+  exit 0
+fi
+if gh api "repos/$REPO/actions/policies" --jq '.[]?.name // empty' 2>/dev/null | grep -qx 'sdlc-allow-pull-request-target'; then
+  echo "Actions policy 'sdlc-allow-pull-request-target' already exists."
+elif ! out="$(printf '%s' "$POLICY" | gh api -X POST "repos/$REPO/actions/policies" --input - 2>&1)"; then
+  echo
+  echo "GitHub refused the Actions policy:"
+  echo "$out"
+  echo "Set it by hand: Settings > Actions > Policies > New policy, restrict events, allow"
+  echo "pull_request_target, and target .github/workflows/sdlc-guardrails.yml and sdlc-ai-review.yml."
+  echo "Then open a test PR and check the 'guardrails' check runs."
+  exit 1
+else
+  echo "Actions policy created. Check it under Settings > Actions > Policies, then open a test PR and"
+  echo "confirm the 'guardrails' check still runs."
+fi

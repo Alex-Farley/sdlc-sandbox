@@ -4,9 +4,17 @@
 # and the scripts it runs are also taken from the base branch. The PR's files are only ever read
 # as data here: nothing from the PR is executed. No secrets are used.
 #
-# Blocks: changes to protected paths (the loop's rules, agent settings, workflows), changes to
-# locked tests, approvals edited by hand or changed after approval, obvious secrets, and (if
-# REQUIRE_SIGNED_APPROVALS=1) approval commits not signed by a key in .sdlc/allowed_signers.
+# Blocks: changes to protected paths (the loop's rules, agent settings, workflows, AGENTS.md), in
+# any upper/lower case; paths that differ only in case; symlinks under work/; changes to locked
+# tests; approvals changed after approval, or copied, moved or linked from another work item; a
+# code change with no approved review of its OWN work item, or code changed after that review;
+# obvious secrets; and (if REQUIRE_SIGNED_APPROVALS=1) approval commits not signed by a key in
+# .sdlc/allowed_signers. Without signing, CI cannot tell who approved (see the guide).
+#
+# GitHub turns pull_request_target off by default on public repos from 2 November 2026. Run
+# scripts/github-protect.sh --apply, which adds an Actions policy allowing it for this workflow
+# and sdlc-ai-review only. Without it this check never runs, and every merge needs your bypass.
+# PRs from forks: actions/checkout refuses fork code under pull_request_target, so they fail here.
 # A PR that deliberately changes protected paths fails here by design: you review it and merge
 # with the ruleset's admin bypass. Dependabot PRs that only bump pinned actions are allowed.
 name: sdlc-guardrails
@@ -21,7 +29,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the PR as data (never executed)
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -73,10 +81,25 @@ jobs:
             bash "$T/.sdlc/hooks/pre-commit" || rc=$?
           git reset -q --soft "$head"
           exit $rc
-      - name: Approvals intact (and signed, if required)
+      - name: Approvals intact (and signed, if required); review approved before merge
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ALLOW: ${{ steps.bot.outputs.allow }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          T="$RUNNER_TEMP/trusted"
+          export SDLC_HEAD_REF="$HEAD_REF"
+          ready="--merge-ready $BASE_SHA"
+          [ "$ALLOW" = "true" ] && ready=""
+          case "$HEAD_REF" in spike/*) ready="";; esac
+          SDLC_LIB="$T/.sdlc/hooks/lib.sh" SDLC_CONFIG_FILE="$T/.sdlc/config" SDLC_SIGNERS_FILE="$T/allowed_signers" \
+            bash "$T/scripts/sdlc" check --signed-since "$BASE_SHA" $ready
+      - name: Flag changes to eval cases (they run on a schedule with an API key)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          T="$RUNNER_TEMP/trusted"
-          SDLC_LIB="$T/.sdlc/hooks/lib.sh" SDLC_CONFIG_FILE="$T/.sdlc/config" SDLC_SIGNERS_FILE="$T/allowed_signers" \
-            bash "$T/scripts/sdlc" check --signed-since "$BASE_SHA"
+          changed="$(git diff --name-only --no-renames "$BASE_SHA" HEAD -- evals/cases || true)"
+          if [ -n "$changed" ]; then
+            echo "::warning::This PR changes eval cases. Read them before merging: they are prompts an agent runs on a schedule."
+            printf '%s\n' "$changed"
+          fi

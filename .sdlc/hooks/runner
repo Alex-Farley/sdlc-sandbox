@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# sdlc hook runner, installed as .git/sdlc-hooks/pre-commit and .git/sdlc-hooks/pre-push
+# (core.hooksPath points there). It runs the COMMITTED copy of the hook and lib.sh from HEAD, not
+# the working tree, so overwriting .sdlc/hooks/* in the working tree cannot switch the checks off.
+# Changing the hooks takes a commit, which the committed hook itself checks (protected path).
+# Before the first commit there is nothing in HEAD, so the working-tree copy is used.
+set -u
+name="$(basename "$0")"
+# Called from another hook manager (husky, lefthook): .sdlc/hooks/runner pre-commit
+if [ "$name" = runner ]; then name="${1:-}"; shift || true; fi
+case "$name" in pre-commit|pre-push) ;; *) echo "sdlc runner: usage: runner pre-commit|pre-push" >&2; exit 1;; esac
+[ -z "${SDLC_IN_RUNNER:-}" ] || { echo "sdlc runner: called itself - check your hook setup" >&2; exit 1; }
+export SDLC_IN_RUNNER=1
+root="$(git rev-parse --show-toplevel)" || exit 1
+cd "$root" || exit 1
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/sdlc-hook.XXXXXX")" || exit 1
+trap 'rm -rf "$tmp"' EXIT
+if git cat-file -e "HEAD:.sdlc/hooks/$name" 2>/dev/null && git cat-file -e "HEAD:.sdlc/hooks/lib.sh" 2>/dev/null; then
+  git show "HEAD:.sdlc/hooks/$name" > "$tmp/$name" && git show "HEAD:.sdlc/hooks/lib.sh" > "$tmp/lib.sh" || exit 1
+elif [ -f ".sdlc/hooks/$name" ] && [ -f .sdlc/hooks/lib.sh ]; then
+  cp ".sdlc/hooks/$name" .sdlc/hooks/lib.sh "$tmp/" || exit 1
+else
+  echo "sdlc: .sdlc/hooks/$name is missing - reinstall the pack (install.sh)" >&2; exit 1
+fi
+bash "$tmp/$name" "$@"

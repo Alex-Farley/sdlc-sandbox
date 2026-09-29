@@ -20,6 +20,6 @@ hooks = true
 matcher = "^(Bash|apply_patch)$"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'command -v python3 >/dev/null 2>&1 || { echo "sdlc guard needs python3 - blocking" >&2; exit 2; }; python3 "$(git rev-parse --show-toplevel)/.sdlc/hooks/agent-guard.py"'
+command = 'python3 "$(git rev-parse --show-toplevel)/.sdlc/hooks/agent-guard.py" || { echo "sdlc guard did not run cleanly - blocking to be safe" >&2; exit 2; }'
 timeout = 30
 statusMessage = "sdlc guard"

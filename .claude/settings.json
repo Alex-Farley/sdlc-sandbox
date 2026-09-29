@@ -1,36 +1,48 @@
 {
   "permissions": {
     "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)",
-      "Read(~/.ssh/**)",
-      "Read(~/.aws/**)",
-      "Edit(/.sdlc/**)",
+      "Bash(curl *)",
+      "Bash(gh alias *)",
+      "Bash(gh api *)",
+      "Bash(gh auth *)",
+      "Bash(gh extension *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr review *)",
+      "Bash(gh workflow *)",
+      "Bash(git -c *)",
+      "Bash(git commit --no-verify *)",
+      "Bash(git commit -n *)",
+      "Bash(git commit-tree *)",
+      "Bash(git config core*)",
+      "Bash(git config gpg*)",
+      "Bash(git config user*)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push origin HEAD:main*)",
+      "Bash(git push origin main*)",
+      "Bash(git update-index *)",
+      "Bash(git update-ref *)",
+      "Bash(scripts/sdlc approve *)",
+      "Bash(scripts/sdlc unlock-test *)",
+      "Bash(wget *)",
+      "Edit(**/.gitattributes)",
+      "Edit(/.agents/**)",
       "Edit(/.claude/**)",
       "Edit(/.codex/**)",
       "Edit(/.gemini/**)",
-      "Edit(/.agents/**)",
       "Edit(/.github/**)",
-      "Edit(/scripts/sdlc)",
-      "Edit(/scripts/github-protect.sh)",
+      "Edit(/.sdlc/**)",
+      "Edit(/AGENTS.md)",
       "Edit(/CLAUDE.md)",
       "Edit(/REVIEW.md)",
+      "Edit(/evals/run.sh)",
       "Edit(/maintain/runbooks/**)",
-      "Edit(**/.gitattributes)",
-      "Bash(git config user*)",
-      "Bash(git config core*)",
-      "Bash(git config gpg*)",
-      "Bash(git -c *)",
-      "Bash(git commit -n *)",
-      "Bash(git commit --no-verify *)",
-      "Bash(git push --force *)",
-      "Bash(git push -f *)",
-      "Bash(gh pr merge *)",
-      "Bash(gh pr review *)",
-      "Bash(scripts/sdlc approve *)",
-      "Bash(scripts/sdlc unlock-test *)",
-      "Bash(curl *)",
-      "Bash(wget *)"
+      "Edit(/scripts/github-protect.sh)",
+      "Edit(/scripts/sdlc)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(~/.aws/**)",
+      "Read(~/.ssh/**)"
     ],
     "disableBypassPermissionsMode": "disable"
   },
@@ -38,19 +50,43 @@
     "enabled": true,
     "failIfUnavailable": false,
     "allowUnsandboxedCommands": false,
-    "excludedCommands": ["gh"],
+    "excludedCommands": [
+      "gh pr checks *",
+      "gh pr comment *",
+      "gh pr create *",
+      "gh pr diff *",
+      "gh pr list *",
+      "gh pr status *",
+      "gh pr view *"
+    ],
     "filesystem": {
-      "denyRead": ["./.env", "~/.ssh", "~/.aws"]
+      "denyRead": [
+        "./.env",
+        "~/.aws",
+        "~/.ssh"
+      ]
     },
     "network": {
-      "allowedDomains": ["github.com", "api.github.com", "registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "rubygems.org"]
+      "allowedDomains": [
+        "api.github.com",
+        "files.pythonhosted.org",
+        "github.com",
+        "pypi.org",
+        "registry.npmjs.org",
+        "rubygems.org"
+      ]
     }
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
-        "hooks": [{ "type": "command", "command": "command -v python3 >/dev/null 2>&1 || { echo 'sdlc guard needs python3 - blocking' >&2; exit 2; }; python3 \"$CLAUDE_PROJECT_DIR/.sdlc/hooks/agent-guard.py\"" }]
+        "matcher": "Edit|Write|NotebookEdit|Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.sdlc/hooks/agent-guard.py\" || { echo 'sdlc guard did not run cleanly - blocking to be safe' >&2; exit 2; }"
+          }
+        ]
       }
     ]
   }

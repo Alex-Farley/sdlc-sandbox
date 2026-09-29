@@ -1,8 +1,20 @@
 {
-  "general": { "defaultApprovalMode": "default" },
-  "security": { "disableYoloMode": true, "disableAlwaysAllow": true },
-  "context": { "fileName": ["AGENTS.md", "GEMINI.md"] },
-  "hooksConfig": { "enabled": true },
+  "general": {
+    "defaultApprovalMode": "default"
+  },
+  "security": {
+    "disableYoloMode": true,
+    "disableAlwaysAllow": true
+  },
+  "context": {
+    "fileName": [
+      "AGENTS.md",
+      "GEMINI.md"
+    ]
+  },
+  "hooksConfig": {
+    "enabled": true
+  },
   "hooks": {
     "BeforeTool": [
       {
@@ -11,7 +23,7 @@
           {
             "name": "sdlc-guard",
             "type": "command",
-            "command": "command -v python3 >/dev/null 2>&1 || { echo 'sdlc guard needs python3 - blocking' >&2; exit 2; }; python3 \"$GEMINI_PROJECT_DIR/.sdlc/hooks/agent-guard.py\"",
+            "command": "python3 \"$GEMINI_PROJECT_DIR/.sdlc/hooks/agent-guard.py\" || { echo 'sdlc guard did not run cleanly - blocking to be safe' >&2; exit 2; }",
             "timeout": 5000
           }
         ]
