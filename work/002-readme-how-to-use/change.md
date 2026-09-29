@@ -3,10 +3,13 @@ id: "002"
 title: "readme-how-to-use"
 stage: change
 route: small
-status: draft          # draft | approved  (only a person changes this, via scripts/sdlc approve)
+status: approved
 risk: routine
 branch: "sdlc/002-readme-how-to-use"
 created: "2026-09-29"
+approved_by: "alex farley <37551336+Alex-Farley@users.noreply.github.com>"
+approved_on: "2026-09-29T08:42:35Z"
+approved_sha256: d0bce1169e42a95a2c02f17603bcb0bfb7b7cc9b58f771094903ddaed0e48185
 ---
 
 # Small change: readme-how-to-use
