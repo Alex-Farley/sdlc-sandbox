@@ -54,6 +54,6 @@ again and re-approved. So finish all fixes before asking for the approval.
 
 ## Hard rules
 - **Never approve, merge or release your own work.** No `gh pr review --approve`, no `gh pr merge`.
-- If branch rules are not set on the repo, tell the person that nothing technical stops a direct
-  push to main.
+- You cannot check branch rules yourself (the guard blocks the GitHub API). Don't try; remind the
+  person once that without branch rules nothing technical stops a direct push to main.
 - Never mark a finding resolved without a commit or a written reason.

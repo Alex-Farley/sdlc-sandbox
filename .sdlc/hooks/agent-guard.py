@@ -135,9 +135,27 @@ def normalise(cmd):
     return re.sub(r"[\"'`\\]", "", cmd)
 
 
+def root_forms(root):
+    """The repo root as it may appear in a command: resolved, and as the tool reported it (on macOS
+    /var/... and /private/var/... are the same folder)."""
+    forms = {root.rstrip("/")}
+    for v in (os.environ.get("CLAUDE_PROJECT_DIR"), os.environ.get("GEMINI_PROJECT_DIR"), os.getcwd()):
+        if v and os.path.realpath(v) == root:
+            forms.add(v.rstrip("/"))
+    if root.startswith("/private/"):
+        forms.add(root[len("/private"):])
+    return sorted(forms, key=len, reverse=True)
+
+
+def strip_root(text, root, repl):
+    for f in root_forms(root):
+        text = text.replace(f + "/", repl)
+    return text
+
+
 def mentions(segment, root):
     """A protected path named in a command: relative to the repo root (or absolute inside it)."""
-    s = segment.replace(root.rstrip("/") + "/", " ").lower()
+    s = strip_root(segment, root, " ").lower()
     words = [p.rstrip("/") for p in all_protected(root)] + [".gitattributes"]
     for w in words:
         if not w:
@@ -161,11 +179,24 @@ def copy_into_safe_place(seg, root):
 MESSAGE_ARG = re.compile(r"(\s(?:-m|--message|--title|--body|-t|-b)[\s=]*)(\"[^\"$`\\]*\"|'[^']*')")  # no $( or ` inside
 
 
+HEREDOC = re.compile(r"(?P<head>[^\n]*)<<-?\s*(?P<q>['\"]?)(?P<tag>\w+)(?P=q)[^\n]*\n(?P<body>.*?)\n\s*(?P=tag)\s*(?=\n|$)", re.S)
+INTERPRETER = re.compile(r"(^|[;&|(\s])(bash|sh|zsh|dash|ksh|python\d*|node|ruby|perl|php|eval|source|\.)\b[^\n]*$")
+
+
+def drop_text_heredocs(cmd):
+    """A heredoc written to a file (cat > work/x.md <<EOF ... EOF) is text, so drop its body. One fed to
+    a shell or interpreter (bash <<EOF) is code, so keep it and check it like any other command."""
+    def repl(m):
+        return m.group(0) if INTERPRETER.search(m.group("head")) else m.group("head") + "<<HEREDOC"
+    return HEREDOC.sub(repl, cmd)
+
+
 def check_shell(cmd, root):
-    cmd = str(cmd)
+    cmd = drop_text_heredocs(str(cmd))
     norm = normalise(cmd)
-    # Commit messages and PR titles are text, not commands or paths.
-    norm = normalise(MESSAGE_ARG.sub(r"\1MSG", cmd))
+    # Commit messages and PR titles are text, not commands or paths. Absolute paths inside the
+    # repo are treated as the repo-relative paths they are.
+    norm = strip_root(normalise(MESSAGE_ARG.sub(r"\1MSG", cmd)), root, "")
     for pattern, why in BASH_BLOCK:
         if re.search(pattern, norm):
             block(why)

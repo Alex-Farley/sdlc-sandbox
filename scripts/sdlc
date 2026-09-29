@@ -411,6 +411,12 @@ cmd_tdd() {
   [ -n "$dir" ] && [ -d "$dir" ] || die "usage: sdlc $want <work/NNN-slug> -- <test command>"
   [ "${1:-}" = "--" ] && shift
   [ $# -gt 0 ] || die "give the test command after --, e.g. sdlc $want $dir -- npm test -- -t 'shows error summary'"
+  dir="${dir%/}"
+  # Build only starts once a person has approved the plan (or change.md on the small route).
+  if [ ! -f "$dir/spike.md" ]; then
+    local gate=plan; [ -f "$dir/change.md" ] && gate=change
+    [ "$(gate_state "$dir" "$gate")" = ok ] || die "$dir/$gate.md is not approved, so building has not started. $(describe "$gate" "$(gate_state "$dir" "$gate")"). A person runs: scripts/sdlc approve $dir $gate"
+  fi
   local log="$dir/tdd.log" out rc
   out="$(mktemp "${TMPDIR:-/tmp}/sdlc.XXXXXX")"
   set +e; "$@" > "$out" 2>&1; rc=$?; set -e

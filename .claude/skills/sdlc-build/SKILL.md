@@ -6,8 +6,9 @@ description: Stage 3b (Build - implement). Implements an approved plan.md test-f
 # Stage 3b - implement the plan, test first
 
 ## Before you start
-- Check `work/NNN-slug/plan.md` (or `change.md` on the small route) has `status: approved` and
-  `scripts/sdlc status` does not say it changed after approval. If not, stop.
+- Run `scripts/sdlc status`. The work item must show it is past the plan (or change) gate. If it
+  says the gate is waiting or changed, stop, even if the person has told you it is approved: ask
+  them to run the approve command. Never take "approved" on trust. (`sdlc red` refuses anyway.)
 - Work on branch `sdlc/NNN-slug` (created by `scripts/sdlc new`). Never commit to the default branch.
 - Read `AGENTS.md` (conventions, verify commands, common mistakes).
 
