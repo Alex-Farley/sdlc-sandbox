@@ -98,7 +98,7 @@ if [ "$VIS" != "PUBLIC" ]; then
   echo "Private repo: GitHub's default pull_request_target block applies to public repos only, so no Actions policy is needed."
   exit 0
 fi
-if gh api "repos/$REPO/actions/policies" --jq '.[]?.name // empty' 2>/dev/null | grep -qx 'sdlc-allow-pull-request-target'; then
+if gh api "repos/$REPO/actions/policies" --jq '.policies[]?.name' 2>/dev/null | grep -qx 'sdlc-allow-pull-request-target'; then
   echo "Actions policy 'sdlc-allow-pull-request-target' already exists."
 elif ! out="$(printf '%s' "$POLICY" | gh api -X POST "repos/$REPO/actions/policies" --input - 2>&1)"; then
   echo
