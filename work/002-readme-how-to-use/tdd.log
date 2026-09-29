@@ -1,0 +1,6 @@
+## RED 2026-09-29T08:43:30Z  exit=1  at sdlc/002-readme-how-to-use  (HEAD 523dfbc)
+$ sh -c grep\ -q\ \'\^##\ How\ to\ use\$\'\ README.md\ \&\&\ grep\ -q\ \'sdlc-loop/SKILL.md\)\'\ README.md
+
+## GREEN 2026-09-29T08:43:51Z  exit=0  at sdlc/002-readme-how-to-use  (HEAD e3ba96f)
+$ sh -c grep\ -q\ \'\^##\ How\ to\ use\$\'\ README.md\ \&\&\ grep\ -q\ \'sdlc-loop/SKILL.md\)\'\ README.md
+
