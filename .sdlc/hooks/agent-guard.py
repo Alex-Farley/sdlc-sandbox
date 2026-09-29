@@ -36,7 +36,7 @@ BASH_BLOCK = [  # matched case-sensitively unless the pattern says (?i)
     (GIT + r"(commit-tree|update-ref|update-index|hash-object|read-tree|write-tree|mktree|replace|filter-branch|filter-repo|fast-import|symbolic-ref)\b",
      "Low-level git commands that can bypass the hooks are not allowed."),
     (r"\bgh\b[^|;&]*\bpr\b[^|;&]*\s(merge|review)\b", "The agent never approves or merges PRs."),
-    (r"\bgh\s+(?:-\S+\s+\S+\s+)*(api|alias|extension|ext|auth|secret|variable|ruleset|workflow|run\s+(rerun|cancel)|repo\s+(edit|delete|rename))\b",
+    (r"\bgh\s+(?:-\S+\s+\S+\s+)*(api|alias|extension|ext|auth|secret|variable|ruleset|label|workflow|run\s+(rerun|cancel)|repo\s+(edit|delete|rename)|pr\s+edit)\b",
      "That GitHub command is for a person (the agent may create, view, check and comment on PRs only)."),
     (r"\bgh\b[^|;&]*(\$\(|`|<\(|--body-file[\s=]+[~/]|\s-F\s+[~/]|@[~/])", "gh runs outside the sandbox, so it may not read files or run commands outside the repo."),
     (GIT + r"push\b[^|;&]*(\s--force(-with-lease)?\b|\s-f\b|\s\+\S)", "Force pushing is not allowed."),

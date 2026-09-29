@@ -51,6 +51,9 @@ Then the person approves review.md (`scripts/sdlc approve work/NNN-slug review`)
 merges the PR. The merge is the release decision. The approval records the commit that was
 reviewed: if any code changes after it, CI fails until review.md is set back to draft, reviewed
 again and re-approved. So finish all fixes before asking for the approval.
+If the repo has the `ai-review` check turned on, it runs after that approval. If it reports a
+blocker, fix it (set review.md back to draft first), push, and ask the person to re-approve; the
+check then reviews the new code. Never add the `ai-review-override` label: that is the person's call.
 
 ## Hard rules
 - **Never approve, merge or release your own work.** No `gh pr review --approve`, no `gh pr merge`.
