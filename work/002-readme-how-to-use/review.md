@@ -1,8 +1,13 @@
 ---
 id: "002"
 stage: review
-status: draft          # draft | approved (human only)
+status: approved
 pr: "https://github.com/Alex-Farley/sdlc-sandbox/pull/4"
+approved_by: "alex farley <37551336+Alex-Farley@users.noreply.github.com>"
+approved_on: "2026-09-29T09:17:39Z"
+upstream_sha256: d0bce1169e42a95a2c02f17603bcb0bfb7b7cc9b58f771094903ddaed0e48185
+reviewed_commit: b68761b2735ffdb80806afd0b5e5b2b7d674d73f
+approved_sha256: 7f0ff73478e5f9d7ce159769e517737f6e674c1d572f2b31bb0e4b4bd285a62d
 ---
 
 # Review: readme-how-to-use
