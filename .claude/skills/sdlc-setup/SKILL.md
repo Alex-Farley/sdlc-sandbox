@@ -33,7 +33,10 @@ Build, test, lint. Run each once and note what a pass looks like. If one is miss
 
 ## 4. Draft AGENTS.md (one page)
 From `.sdlc/templates/AGENTS.md`: verify commands, conventions that matter, a five-line
-architecture overview, and an empty "Common mistakes" list.
+architecture overview, and an empty "Common mistakes" list. `AGENTS.md` is protected (it is the
+agents' instructions, so an agent must not be able to rewrite its own rules). Write your draft to
+`AGENTS.draft.md` and tell the person to review it, then run:
+`mv AGENTS.draft.md AGENTS.md && git add AGENTS.md && SDLC_ALLOW_PROTECTED=1 git commit -m "Fill in AGENTS.md"`
 
 ## 5. Draft the .sdlc/config changes for the person
 You cannot edit `.sdlc/` (it is protected). Show the person the lines to set:
@@ -45,7 +48,8 @@ They edit and commit it with `SDLC_ALLOW_PROTECTED=1 git commit`.
 ## 6. Check the safety net and report
 Tell the person plainly which of these are in place and which are not (read `.git/config` rather
 than running `git config`, which the guard blocks):
-- git hooks active (`hooksPath = .sdlc/hooks` in `.git/config`)
+- git hooks active (`hooksPath` in `.git/config` ends in `sdlc-hooks`; if not, the person runs
+  `scripts/sdlc install-hooks`, once per clone)
 - the install committed straight to main **before** branch rules are switched on
 - for Claude: `.claude/settings.json` has the guard hook, deny rules and sandbox. The sandbox needs
   macOS, or Linux/WSL2 with `bubblewrap` and `socat` (Ubuntu 24.04+ also needs its AppArmor rule
@@ -59,8 +63,9 @@ than running `git config`, which the guard blocks):
 - gitleaks installed (much better secret detection than the built-in patterns)
 
 ## Keeping it current
-When the agent repeats a mistake, or a reviewer says the same thing twice, add one line to "Common
-mistakes" in `AGENTS.md`. If it goes over a page, merge or remove old lines.
+When the agent repeats a mistake, or a reviewer says the same thing twice, propose one line for
+"Common mistakes" in `AGENTS.md`; the person adds it (the file is protected). If it goes over a
+page, suggest lines to merge or remove.
 
 ## Portability
 `AGENTS.md` is read by Codex, Cursor, Copilot and others. Gemini CLI reads it when

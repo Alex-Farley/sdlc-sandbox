@@ -7,7 +7,7 @@
 SDLC_KEYS="VERIFY_CMD PROTECTED_PATHS VERIFY_ON_COMMIT DEFAULT_BRANCH CLIENT_CODE AI_USE_APPROVAL REQUIRE_SIGNED_APPROVALS SECRETS_IGNORE_PATHS"
 
 # Paths that are always protected, whatever the config says. People change these, deliberately.
-SDLC_ALWAYS_PROTECTED=".sdlc/ .claude/ .codex/ .gemini/ .agents/ .github/ scripts/sdlc scripts/github-protect.sh CLAUDE.md REVIEW.md maintain/runbooks/"
+SDLC_ALWAYS_PROTECTED=".sdlc/ .claude/ .codex/ .gemini/ .agents/ .github/ scripts/sdlc scripts/github-protect.sh CLAUDE.md AGENTS.md REVIEW.md maintain/runbooks/ evals/run.sh"
 
 # git diff that cannot be fooled by .gitattributes (-diff, textconv, external diff drivers).
 sdlc_diff() { git -c core.quotePath=false diff --text --no-textconv --no-ext-diff "$@"; }
@@ -51,12 +51,21 @@ sdlc_load_config() {
 }
 
 # Is a path protected? (always-protected list, config list, and any .gitattributes at any depth)
+# Compared case-insensitively: on macOS and Windows ".SDLC/hooks/x" IS ".sdlc/hooks/x".
+# An entry ending in / protects a folder; any other entry protects that exact path, or a folder of
+# that name (so "scripts/sdlc" does not also protect "scripts/sdlc-helper.sh").
+sdlc_lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 sdlc_is_protected() {
-  local path="$1" p
+  local path p lp
+  path="$(sdlc_lc "$1")"
   case "$path" in .gitattributes|*/.gitattributes) return 0;; esac
   set -f
   for p in $SDLC_ALWAYS_PROTECTED $PROTECTED_PATHS; do
-    case "$path" in "$p"|"$p"*) set +f; return 0;; esac
+    lp="$(sdlc_lc "$p")"
+    case "$lp" in
+      */) case "$path" in "$lp"*) set +f; return 0;; esac;;
+      *)  case "$path" in "$lp"|"$lp"/*) set +f; return 0;; esac;;
+    esac
   done
   set +f
   return 1
@@ -64,8 +73,23 @@ sdlc_is_protected() {
 
 sdlc_sha256() { if command -v sha256sum >/dev/null; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
 
-# Hash of everything after the front matter, line endings normalised.
+# Legacy (v4.0) approval hash: everything after the front matter, line endings normalised.
+# Still accepted for approvals that were made before 4.1 and have not changed since.
 sdlc_body_hash() { tr -d '\r' | awk 'NR==1&&/^---[[:space:]]*$/{f=1;next} f==1&&/^---[[:space:]]*$/{f=2;next} f==2{print}' | sdlc_sha256; }
+
+# Approval hash (v4.1+): bound to the file's path, and covers the front matter as well as the body
+# (all fields except status and approved_sha256 themselves), so an approval cannot be copied, moved
+# or symlinked to another work item, and fields such as risk: cannot change after approval.
+#   sdlc_approval_hash <repo-relative path>   (content on stdin)
+sdlc_approval_hash() {
+  { printf 'sdlc-approval-v2\npath: %s\n' "$1"
+    tr -d '\r' | awk '
+      NR==1&&/^---[[:space:]]*$/{f=1;next}
+      f==1&&/^---[[:space:]]*$/{f=2;print "---";next}
+      f==1&&/^(status|approved_sha256):/{next}
+      {print}'
+  } | sdlc_sha256
+}
 
 # Read one front matter field. Handles quoted values and trailing comments; strips CR.
 sdlc_fm_get() {

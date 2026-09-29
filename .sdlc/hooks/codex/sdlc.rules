@@ -8,3 +8,5 @@ prefix_rule(pattern=["git", "config"], decision="forbidden", justification="No g
 prefix_rule(pattern=["git", "commit", ["-n", "--no-verify"]], decision="forbidden", justification="Hooks must run")
 prefix_rule(pattern=["scripts/sdlc", ["approve", "unlock-test"]], decision="forbidden", justification="Approvals are for a person")
 prefix_rule(pattern=[["curl", "wget"]], decision="forbidden", justification="No ad-hoc downloads")
+prefix_rule(pattern=["gh", ["api", "alias", "extension", "auth", "workflow", "secret", "ruleset"]], decision="forbidden", justification="A person uses these GitHub commands")
+prefix_rule(pattern=["git", ["commit-tree", "update-ref", "update-index", "hash-object", "replace", "filter-branch"]], decision="forbidden", justification="Low-level git can bypass the hooks")
